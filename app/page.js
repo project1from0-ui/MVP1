@@ -57,18 +57,17 @@ const NutritionGoalsDisplay = ({ goals, onClose }) => {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        padding: '16px',
+        padding: '24px',
         cursor: 'pointer'
       }}
     >
       <div style={{
         background: 'white',
         borderRadius: 0,
-        padding: '20px 16px',
-        maxWidth: '100%',
+        padding: '32px 24px',
+        maxWidth: '800px',
         width: '100%',
-        animation: 'fadeIn 0.5s ease',
-        minHeight: '100vh'
+        animation: 'fadeIn 0.5s ease'
       }}
       onClick={onClose}
       >
@@ -859,6 +858,10 @@ export default function Page() {
   const [selectedRestaurant, setSelectedRestaurant] = useState(null);
   const [restaurantMenus, setRestaurantMenus] = useState([]);
   const [selectedMenu, setSelectedMenu] = useState(null);
+  const [menuSearchResults, setMenuSearchResults] = useState([]);
+  const [isSearchingMenus, setIsSearchingMenus] = useState(false);
+  const [cachedMenus, setCachedMenus] = useState([]); // キャッシュされたメニューデータ
+  const [isCacheLoaded, setIsCacheLoaded] = useState(false); // キャッシュ読み込み完了フラグ
   const [userProfile, setUserProfile] = useState(null);
   const [accumulatedRequests, setAccumulatedRequests] = useState([]);
   const [displayCount, setDisplayCount] = useState(5); // 表示件数（初期値は5）
@@ -944,8 +947,90 @@ export default function Page() {
   const [isApplyingPreference, setIsApplyingPreference] = useState(false); // Gemini処理中フラグ
   const [preferenceApplied, setPreferenceApplied] = useState(false); // 要望適用済みフラグ
 
+  // 文字列正規化関数（カタカナ・ひらがな・全角英数字を統一）
+  const normalizeString = (str) => {
+    if (!str) return '';
+    return str
+      .toLowerCase()
+      .replace(/[Ａ-Ｚａ-ｚ０-９]/g, (s) => String.fromCharCode(s.charCodeAt(0) - 0xFEE0))
+      .replace(/[\u3041-\u3096]/g, (s) => String.fromCharCode(s.charCodeAt(0) + 0x60))
+      .replace(/[\s　]/g, '');
+  };
+
+  // メニュー検索関数（キャッシュを使用）
+  const searchMenus = async (query) => {
+    if (!query || query.trim().length === 0) {
+      setMenuSearchResults([]);
+      setIsSearchingMenus(false);
+      return;
+    }
+
+    setIsSearchingMenus(true);
+
+    try {
+      // キャッシュがない場合は取得
+      let menusToSearch = cachedMenus;
+      if (menusToSearch.length === 0) {
+        console.log('[Menu Search] Cache empty, fetching data...');
+        const response = await fetch('/api/menus-unified?limit=10000&sources=official,convenience,ai_imputed&minConfidence=0');
+        const data = await response.json();
+        menusToSearch = data.menus || [];
+        setCachedMenus(menusToSearch);
+        setIsCacheLoaded(true);
+      }
+
+      const normalizedQuery = normalizeString(query);
+
+      const results = menusToSearch.filter(menu => {
+        const normalizedMenuName = normalizeString(menu.menu_item || '');
+        const normalizedRestaurantName = normalizeString(menu.restaurant_chain || '');
+
+        return normalizedMenuName.includes(normalizedQuery) ||
+               normalizedRestaurantName.includes(normalizedQuery);
+      });
+
+      results.sort((a, b) => {
+        const aMenuMatch = normalizeString(a.menu_item || '').includes(normalizedQuery);
+        const bMenuMatch = normalizeString(b.menu_item || '').includes(normalizedQuery);
+
+        if (aMenuMatch && !bMenuMatch) return -1;
+        if (!aMenuMatch && bMenuMatch) return 1;
+        return 0;
+      });
+
+      console.log('[Menu Search] Query:', query, 'Results:', results.length, '(from cache:', cachedMenus.length > 0, ')');
+      setMenuSearchResults(results.slice(0, 100));
+    } catch (error) {
+      console.error('[Menu Search] Error:', error);
+      setMenuSearchResults([]);
+    } finally {
+      setIsSearchingMenus(false);
+    }
+  };
 
   useEffect(() => { setIsClient(true); }, []);
+
+  // 栄養成分表検索ページに移動したときに初回だけメニューデータをキャッシュ
+  useEffect(() => {
+    if (currentSection === 'nutrition-search' && !isCacheLoaded && cachedMenus.length === 0) {
+      const loadMenuCache = async () => {
+        try {
+          console.log('[Menu Cache] Loading all menus for search...');
+          setIsSearchingMenus(true);
+          const response = await fetch('/api/menus-unified?limit=10000&sources=official,convenience,ai_imputed&minConfidence=0');
+          const data = await response.json();
+          console.log('[Menu Cache] Cached', data.menus?.length, 'menus');
+          setCachedMenus(data.menus || []);
+          setIsCacheLoaded(true);
+        } catch (error) {
+          console.error('[Menu Cache] Error loading cache:', error);
+        } finally {
+          setIsSearchingMenus(false);
+        }
+      };
+      loadMenuCache();
+    }
+  }, [currentSection, isCacheLoaded, cachedMenus.length]);
 
   // 飲食店メニューを取得
   useEffect(() => {
@@ -2515,14 +2600,8 @@ export default function Page() {
 
   const styles = {
     container: {
-      position: 'fixed',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      width: '100vw',
-      height: '100vh',
-      background: 'white',
+      minHeight: '100vh',
+      background: '#f9fafb',
       padding: 0,
       margin: 0,
       overflow: 'auto',
@@ -2531,24 +2610,24 @@ export default function Page() {
     },
     card: {
       width: '100%',
-      height: '100%',
-      margin: 0,
+      maxWidth: '1200px',
+      margin: '0 auto',
       background: 'white',
       borderRadius: 0,
-      padding: 20,
+      padding: '24px',
       boxShadow: 'none',
       position: 'relative',
       minHeight: '100vh',
       boxSizing: 'border-box'
     },
-    title: { fontSize: 32, textAlign: 'center', marginBottom: 20, color: '#333' },
+    title: { fontSize: 36, textAlign: 'center', marginBottom: 24, color: '#333', fontWeight: 700 },
     button: {
-      display: 'block', width: '100%', maxWidth: 300, margin: '20px auto', padding: '15px 30px',
+      display: 'block', width: '100%', maxWidth: 320, margin: '24px auto', padding: '16px 32px',
       background: '#000',
-      color: 'white', border: 'none', borderRadius: 10, fontSize: 16, cursor: 'pointer',
-      transition: 'background 0.2s ease'
+      color: 'white', border: 'none', borderRadius: 12, fontSize: 17, cursor: 'pointer',
+      transition: 'all 0.2s ease', fontWeight: 600
     },
-    input: { width: '100%', padding: 12, marginBottom: 15, border: '2px solid #e0e0e0', borderRadius: 8, fontSize: 16 },
+    input: { width: '100%', padding: 14, marginBottom: 16, border: '2px solid #e0e0e0', borderRadius: 10, fontSize: 17 },
     pill: (active) => ({
       padding: '6px 10px', borderRadius: 999,
       border: `1px solid ${active ? '#333' : '#e5e7eb'}`,
@@ -2587,28 +2666,128 @@ export default function Page() {
 
   if (!isClient) return null;
 
+  // ヘッダーコンポーネント
+  const renderHeader = () => {
+    if (currentSection === 'logo-zoom') return null; // ロゴ画面ではヘッダー非表示
+
+    return (
+      <header style={{
+        position: 'sticky',
+        top: 0,
+        zIndex: 1000,
+        background: 'white',
+        borderBottom: '1px solid #e5e7eb',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
+      }}>
+        <div style={{
+          maxWidth: '1200px',
+          margin: '0 auto',
+          padding: '16px 24px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between'
+        }}>
+          {/* ロゴ */}
+          <div
+            onClick={() => setCurrentSection('feature-select')}
+            style={{
+              fontSize: 28,
+              fontWeight: 800,
+              color: '#000',
+              cursor: 'pointer',
+              letterSpacing: '0.05em'
+            }}
+          >
+            BULK
+          </div>
+
+          {/* ナビゲーション */}
+          <nav style={{
+            display: 'flex',
+            gap: '24px',
+            alignItems: 'center'
+          }}>
+            <button
+              onClick={() => setCurrentSection('nutrition-search')}
+              style={{
+                background: currentSection === 'nutrition-search' || currentSection === 'restaurant-menu' || currentSection === 'menu-detail' ? '#000' : 'transparent',
+                color: currentSection === 'nutrition-search' || currentSection === 'restaurant-menu' || currentSection === 'menu-detail' ? 'white' : '#666',
+                border: 'none',
+                padding: '10px 20px',
+                borderRadius: 8,
+                fontSize: 15,
+                fontWeight: 600,
+                cursor: 'pointer',
+                transition: 'all 0.2s'
+              }}
+              onMouseEnter={e => {
+                if (currentSection !== 'nutrition-search' && currentSection !== 'restaurant-menu' && currentSection !== 'menu-detail') {
+                  e.target.style.background = '#f3f4f6';
+                  e.target.style.color = '#000';
+                }
+              }}
+              onMouseLeave={e => {
+                if (currentSection !== 'nutrition-search' && currentSection !== 'restaurant-menu' && currentSection !== 'menu-detail') {
+                  e.target.style.background = 'transparent';
+                  e.target.style.color = '#666';
+                }
+              }}
+            >
+              栄養成分表検索
+            </button>
+
+            <button
+              onClick={() => { setShowProfileForm(true); setCurrentSection('profile'); }}
+              style={{
+                background: currentSection === 'profile' || currentSection === 'mode-select' || currentSection === 'home' ? '#000' : 'transparent',
+                color: currentSection === 'profile' || currentSection === 'mode-select' || currentSection === 'home' ? 'white' : '#666',
+                border: 'none',
+                padding: '10px 20px',
+                borderRadius: 8,
+                fontSize: 15,
+                fontWeight: 600,
+                cursor: 'pointer',
+                transition: 'all 0.2s'
+              }}
+              onMouseEnter={e => {
+                if (currentSection !== 'profile' && currentSection !== 'mode-select' && currentSection !== 'home') {
+                  e.target.style.background = '#f3f4f6';
+                  e.target.style.color = '#000';
+                }
+              }}
+              onMouseLeave={e => {
+                if (currentSection !== 'profile' && currentSection !== 'mode-select' && currentSection !== 'home') {
+                  e.target.style.background = 'transparent';
+                  e.target.style.color = '#666';
+                }
+              }}
+            >
+              栄養管理
+            </button>
+          </nav>
+        </div>
+      </header>
+    );
+  };
+
   return (
     <div className="container" style={styles.container}>
+      {renderHeader()}
 
       {/* ロゴズーム画面 */}
       {currentSection === 'logo-zoom' && (
         <div
           onClick={() => { setCurrentSection('feature-select'); }}
           style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            width: '100vw',
-            height: '100vh',
+            minHeight: '100vh',
+            width: '100%',
             background: 'black',
             display: 'flex',
             flexDirection: 'column',
-            alignItems: 'flex-start',
+            alignItems: 'center',
             justifyContent: 'center',
             cursor: 'pointer',
-            padding: '0 40px',
+            padding: '60px 40px',
             margin: 0,
             animation: 'fadeIn 0.5s ease-in-out',
             boxSizing: 'border-box',
@@ -2617,13 +2796,14 @@ export default function Page() {
         >
           <p style={{
             color: 'white',
-            fontSize: 27,
+            fontSize: 32,
             lineHeight: 1.8,
-            textAlign: 'left',
+            textAlign: 'center',
             animation: 'fadeInText 1.5s ease-out',
             margin: 0,
             padding: 0,
-            whiteSpace: 'pre-line'
+            whiteSpace: 'pre-line',
+            maxWidth: '800px'
           }}>
             {`BULKは、
 あなただけに最適な食事を
@@ -2631,108 +2811,204 @@ export default function Page() {
 栄養AIエージェントです。`}
           </p>
           <p style={{
-            position: 'absolute',
-            bottom: '100px',
-            left: '50%',
-            transform: 'translateX(-50%)',
+            marginTop: '60px',
             textAlign: 'center',
             color: '#999',
-            fontSize: 16,
+            fontSize: 18,
             animation: 'blinkText 1.5s ease-in-out infinite',
-            margin: 0
+            margin: '60px 0 0 0'
           }}>
             BULKを始める
           </p>
         </div>
       )}
 
-      {/* 機能選択画面 */}
+      {/* 機能選択画面（ランディングページ） */}
       {currentSection === 'feature-select' && (
         <div style={{
-          height: '100vh',
-          background: 'white',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: '40px 20px',
-          gap: '30px'
+          minHeight: 'calc(100vh - 64px)',
+          background: 'white'
         }}>
-          <button
-            onClick={() => { setCurrentSection('nutrition-search'); }}
-            style={{
-              width: '100%',
-              maxWidth: '400px',
-              padding: '40px 30px',
-              background: 'white',
-              color: '#333',
-              border: '2px solid #e0e0e0',
-              borderRadius: 16,
-              cursor: 'pointer',
-              fontSize: 24,
-              fontWeight: 700,
-              boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
-              transition: 'all 0.3s ease'
-            }}
-            onMouseEnter={e => {
-              e.target.style.background = '#000';
-              e.target.style.color = 'white';
-              e.target.style.borderColor = '#000';
-            }}
-            onMouseLeave={e => {
-              e.target.style.background = 'white';
-              e.target.style.color = '#333';
-              e.target.style.borderColor = '#e0e0e0';
-            }}
-          >
-            栄養成分表-検索
-          </button>
+          {/* ヒーローセクション */}
+          <div style={{
+            maxWidth: '1200px',
+            margin: '0 auto',
+            padding: '80px 24px 60px',
+            textAlign: 'center'
+          }}>
+            <h1 style={{
+              fontSize: 48,
+              fontWeight: 800,
+              color: '#000',
+              marginBottom: 20,
+              letterSpacing: '0.02em'
+            }}>
+              あなただけの最適な食事を
+            </h1>
+            <p style={{
+              fontSize: 20,
+              color: '#666',
+              lineHeight: 1.8,
+              maxWidth: '700px',
+              margin: '0 auto 60px'
+            }}>
+              BULKは、栄養成分検索と個別最適化された栄養管理を提供する<br />
+              AIエージェントサービスです
+            </p>
+          </div>
 
-          <button
-            onClick={() => { setShowProfileForm(true); setCurrentSection('profile'); }}
-            style={{
-              width: '100%',
-              maxWidth: '400px',
-              padding: '40px 30px',
-              background: 'white',
-              color: '#333',
-              border: '2px solid #e0e0e0',
-              borderRadius: 16,
-              cursor: 'pointer',
-              fontSize: 24,
-              fontWeight: 700,
-              boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
-              transition: 'all 0.3s ease'
-            }}
-            onMouseEnter={e => {
-              e.target.style.background = '#000';
-              e.target.style.color = 'white';
-              e.target.style.borderColor = '#000';
-            }}
-            onMouseLeave={e => {
-              e.target.style.background = 'white';
-              e.target.style.color = '#333';
-              e.target.style.borderColor = '#e0e0e0';
-            }}
-          >
-            栄養管理-AIエージェント
-          </button>
+          {/* 機能カード */}
+          <div style={{
+            maxWidth: '1200px',
+            margin: '0 auto',
+            padding: '0 24px 80px',
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))',
+            gap: '32px'
+          }}>
+            {/* 栄養成分表検索カード */}
+            <div
+              onClick={() => { setCurrentSection('nutrition-search'); }}
+              style={{
+                background: 'white',
+                border: '2px solid #e0e0e0',
+                borderRadius: 20,
+                padding: '48px 36px',
+                cursor: 'pointer',
+                transition: 'all 0.3s ease',
+                boxShadow: '0 4px 20px rgba(0, 0, 0, 0.08)'
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.transform = 'translateY(-8px)';
+                e.currentTarget.style.boxShadow = '0 12px 32px rgba(0, 0, 0, 0.15)';
+                e.currentTarget.style.borderColor = '#000';
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.transform = 'translateY(0)';
+                e.currentTarget.style.boxShadow = '0 4px 20px rgba(0, 0, 0, 0.08)';
+                e.currentTarget.style.borderColor = '#e0e0e0';
+              }}
+            >
+              <div style={{
+                fontSize: 48,
+                marginBottom: 24
+              }}>🔍</div>
+              <h2 style={{
+                fontSize: 28,
+                fontWeight: 700,
+                color: '#000',
+                marginBottom: 16
+              }}>
+                栄養成分表検索
+              </h2>
+              <p style={{
+                fontSize: 16,
+                color: '#666',
+                lineHeight: 1.7,
+                marginBottom: 24
+              }}>
+                全国のレストランチェーン・コンビニの<br />
+                栄養成分情報を検索できます。<br />
+                ひらがな・カタカナ対応で簡単検索。
+              </p>
+              <div style={{
+                display: 'inline-block',
+                padding: '12px 24px',
+                background: '#000',
+                color: 'white',
+                borderRadius: 10,
+                fontSize: 15,
+                fontWeight: 600
+              }}>
+                検索を始める →
+              </div>
+            </div>
+
+            {/* 栄養管理カード */}
+            <div
+              onClick={() => { setShowProfileForm(true); setCurrentSection('profile'); }}
+              style={{
+                background: 'white',
+                border: '2px solid #e0e0e0',
+                borderRadius: 20,
+                padding: '48px 36px',
+                cursor: 'pointer',
+                transition: 'all 0.3s ease',
+                boxShadow: '0 4px 20px rgba(0, 0, 0, 0.08)'
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.transform = 'translateY(-8px)';
+                e.currentTarget.style.boxShadow = '0 12px 32px rgba(0, 0, 0, 0.15)';
+                e.currentTarget.style.borderColor = '#000';
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.transform = 'translateY(0)';
+                e.currentTarget.style.boxShadow = '0 4px 20px rgba(0, 0, 0, 0.08)';
+                e.currentTarget.style.borderColor = '#e0e0e0';
+              }}
+            >
+              <div style={{
+                fontSize: 48,
+                marginBottom: 24
+              }}>🎯</div>
+              <h2 style={{
+                fontSize: 28,
+                fontWeight: 700,
+                color: '#000',
+                marginBottom: 16
+              }}>
+                栄養管理AIエージェント
+              </h2>
+              <p style={{
+                fontSize: 16,
+                color: '#666',
+                lineHeight: 1.7,
+                marginBottom: 24
+              }}>
+                あなたの身体情報と目標に基づいて、<br />
+                最適な栄養バランスを自動計算。<br />
+                個別最適化された食事提案を受けられます。
+              </p>
+              <div style={{
+                display: 'inline-block',
+                padding: '12px 24px',
+                background: '#000',
+                color: 'white',
+                borderRadius: 10,
+                fontSize: 15,
+                fontWeight: 600
+              }}>
+                管理を始める →
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
       {/* 栄養成分表検索画面 */}
       {currentSection === 'nutrition-search' && (
-        <div style={{ ...styles.card, height: '100vh', overflow: 'auto', display: 'flex', flexDirection: 'column', padding: '20px' }}>
-          <button onClick={handleBack} style={styles.backButton}>←</button>
-          <h1 style={{ ...styles.title, marginBottom: 20 }}>栄養成分表検索</h1>
+        <div style={{ ...styles.card, minHeight: 'calc(100vh - 64px)', overflow: 'auto', display: 'flex', flexDirection: 'column', padding: '40px 24px' }}>
+          <h1 style={{ ...styles.title, marginBottom: 32 }}>栄養成分表検索</h1>
 
           {/* 検索バー */}
           <div style={{ marginBottom: 20 }}>
             <input
               type="text"
-              placeholder="飲食店名で検索..."
+              placeholder="店舗名やメニュー名で検索... (例: マクドナルド、ビッグマック、ハンバーガー)"
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => {
+                const value = e.target.value;
+                setSearchQuery(value);
+                if (value.trim().length >= 2) {
+                  if (window.searchTimeout) clearTimeout(window.searchTimeout);
+                  window.searchTimeout = setTimeout(() => {
+                    searchMenus(value);
+                  }, 500);
+                } else {
+                  setMenuSearchResults([]);
+                  setIsSearchingMenus(false);
+                }
+              }}
               style={{
                 width: '100%',
                 padding: '12px 16px',
@@ -2742,10 +3018,73 @@ export default function Page() {
                 outline: 'none'
               }}
             />
+            {isSearchingMenus && (
+              <div style={{ marginTop: 8, fontSize: 14, color: '#666' }}>
+                検索中...
+              </div>
+            )}
           </div>
 
-          {/* ジャンル別飲食店一覧 */}
-          <div style={{ flex: 1, overflowY: 'auto' }}>
+          {/* 検索結果またはジャンル別飲食店一覧 */}
+          {menuSearchResults.length > 0 ? (
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+              <div style={{ marginBottom: 12, fontSize: 14, color: '#666', fontWeight: 600 }}>
+                検索結果: {menuSearchResults.length} 件
+              </div>
+              {menuSearchResults.map((menu, index) => (
+                <div
+                  key={index}
+                  onClick={() => {
+                    setSelectedMenu(menu);
+                    setCurrentSection('menu-detail');
+                  }}
+                  style={{
+                    padding: '16px',
+                    marginBottom: 12,
+                    background: 'white',
+                    border: '2px solid #e0e0e0',
+                    borderRadius: 10,
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease'
+                  }}
+                  onMouseEnter={e => {
+                    e.currentTarget.style.background = '#f5f5f5';
+                    e.currentTarget.style.borderColor = '#333';
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.background = 'white';
+                    e.currentTarget.style.borderColor = '#e0e0e0';
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 'bold', fontSize: 16, marginBottom: 4, color: '#333' }}>
+                        {menu.menu_item || 'メニュー名なし'}
+                      </div>
+                      <div style={{ fontSize: 13, color: '#666', marginBottom: 8 }}>
+                        {menu.restaurant_chain}
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, fontSize: 14 }}>
+                    <div style={{ color: '#666' }}>
+                      <span style={{ fontWeight: 600, color: '#333' }}>カロリー:</span> {menu.calories || '-'} kcal
+                    </div>
+                    <div style={{ color: '#666' }}>
+                      <span style={{ fontWeight: 600, color: '#333' }}>タンパク質:</span> {menu.protein || '-'} g
+                    </div>
+                    <div style={{ color: '#666' }}>
+                      <span style={{ fontWeight: 600, color: '#333' }}>脂質:</span> {menu.fat || '-'} g
+                    </div>
+                    <div style={{ color: '#666' }}>
+                      <span style={{ fontWeight: 600, color: '#333' }}>炭水化物:</span> {menu.carbohydrates || '-'} g
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ flex: 1, overflowY: 'auto' }}>
             {(() => {
               // 静的な飲食店データ（ジャンル別）
               const restaurantsByGenre = {
@@ -2922,6 +3261,65 @@ export default function Page() {
                 );
               });
             })()}
+          </div>
+          )}
+        </div>
+      )}
+
+      {/* メニュー詳細画面（検索結果から選択） */}
+      {currentSection === 'menu-detail' && selectedMenu && (
+        <div style={{ ...styles.card, height: '100vh', overflow: 'auto', display: 'flex', flexDirection: 'column', padding: '20px' }}>
+          <button onClick={() => {
+            setCurrentSection('nutrition-search');
+            setSelectedMenu(null);
+          }} style={styles.backButton}>←</button>
+
+          <h1 style={{ ...styles.title, marginBottom: 10 }}>{selectedMenu.menu_item}</h1>
+          <div style={{ fontSize: 14, color: '#666', marginBottom: 20 }}>
+            {selectedMenu.restaurant_chain}
+          </div>
+
+          <div style={{ background: '#f9f9f9', padding: '20px', borderRadius: 10, marginBottom: 20 }}>
+            <h2 style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 16, color: '#333' }}>栄養成分</h2>
+            <div style={{ display: 'grid', gap: 12 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: 8, borderBottom: '1px solid #e0e0e0' }}>
+                <span style={{ fontWeight: 600 }}>カロリー</span>
+                <span style={{ fontSize: 18, fontWeight: 'bold', color: '#e74c3c' }}>{selectedMenu.calories || '-'} kcal</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: 8, borderBottom: '1px solid #e0e0e0' }}>
+                <span style={{ fontWeight: 600 }}>タンパク質</span>
+                <span style={{ fontSize: 16, fontWeight: 600, color: '#3498db' }}>{selectedMenu.protein || '-'} g</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: 8, borderBottom: '1px solid #e0e0e0' }}>
+                <span style={{ fontWeight: 600 }}>脂質</span>
+                <span style={{ fontSize: 16, fontWeight: 600, color: '#f39c12' }}>{selectedMenu.fat || '-'} g</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: 8, borderBottom: '1px solid #e0e0e0' }}>
+                <span style={{ fontWeight: 600 }}>炭水化物</span>
+                <span style={{ fontSize: 16, fontWeight: 600, color: '#2ecc71' }}>{selectedMenu.carbohydrates || '-'} g</span>
+              </div>
+              {selectedMenu.sodium > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: 8, borderBottom: '1px solid #e0e0e0' }}>
+                  <span style={{ fontWeight: 600 }}>ナトリウム</span>
+                  <span style={{ fontSize: 16, fontWeight: 600 }}>{selectedMenu.sodium} mg</span>
+                </div>
+              )}
+              {selectedMenu.price > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: 8, borderBottom: '1px solid #e0e0e0' }}>
+                  <span style={{ fontWeight: 600 }}>価格</span>
+                  <span style={{ fontSize: 16, fontWeight: 600 }}>¥{selectedMenu.price}</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div style={{ fontSize: 12, color: '#999', marginTop: 'auto', paddingTop: 20 }}>
+            データソース: {selectedMenu.data_source === 'official' ? '公式データ' :
+                          selectedMenu.data_source === 'convenience' ? 'コンビニデータ' :
+                          selectedMenu.data_source === 'ai_imputed' ? 'AI推計データ' : selectedMenu.data_source}
+            {selectedMenu.confidence_score && (
+              <> (信頼度: {(selectedMenu.confidence_score * 100).toFixed(0)}%)</>
+            )}
           </div>
         </div>
       )}
